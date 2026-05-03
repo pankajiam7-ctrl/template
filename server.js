@@ -75,3 +75,5 @@ app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`)
   console.log(`AI Provider: ${getProviderName()}`)
 })
+app.timeout = 120000           // ← add karo
+app.keepAliveTimeout = 121000  // ← add karo

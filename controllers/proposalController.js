@@ -1,6 +1,5 @@
 import { StateGraph } from "@langchain/langgraph";
 import { EventEmitter } from "events";
-
 import { ChatOpenAI } from "@langchain/openai";
 import dotenv from "dotenv";
 
@@ -13,6 +12,7 @@ EventEmitter.defaultMaxListeners = 20;
 const llm = new ChatOpenAI({
   model: "gpt-4.1",
   temperature: 0.3,
+  timeout: 100000,
   apiKey: process.env.OPENAI_API_KEY,
 });
 
@@ -80,9 +80,7 @@ Return JSON:
 }
 `.trim();
 
-  const res = await llm.invoke(prompt, {
-    max_tokens: 300, // donor profile ke liye 300 kaafi hai
-  });
+  const res = await llm.invoke(prompt, { max_tokens: 300 });
   const parsed = safeJSON(res.content);
 
   return {
@@ -141,10 +139,11 @@ Return JSON:
 };
 
 // ── IMPROVE NODE ────────────────────
+// FIX 1: max 1 iteration (2 se 1 — saves ~8-10s in production)
 const improveNode = async (state) => {
   const { payload, review, iteration } = state;
 
-  if ((iteration || 0) >= 2) {
+  if ((iteration || 0) >= 1) {  // ✅ 2 → 1
     return { ...state, forceStop: true };
   }
 
@@ -221,19 +220,7 @@ Return JSON:
   };
 };
 
-// ── PROPOSAL NODE (3 parallel calls) ─────────────────────────────────────────
-//
-//  Node 1 — Core Narrative   : executive_summary, objectives, sustainability,
-//                              monitoring_evaluation, budget        (~1,240 tok)
-//  Node 2 — Plan & Alignment : activities, timeline, alignment_with_donor,
-//                              implementation_strategy, target_beneficiaries (~1,251 tok)
-//  Node 3 — Problem & Strategy: problem, outcomes, risk_analysis,
-//                              innovation_or_approach               (~1,118 tok)
-//
-//  Total output: ~3,610 tokens  (was ~7,000 with proposal_html)
-//  All 3 run in parallel → faster than single sequential call
-// ─────────────────────────────────────────────────────────────────────────────
-
+// ── PROPOSAL NODE (3 parallel calls) ────────────────────────────────────────
 const buildBaseContext = (payload, donorProfile, outlineResult, review) => `
 NGO INFO:
 ${JSON.stringify(payload)}
@@ -248,7 +235,6 @@ REVIEW:
 ${JSON.stringify(review)}
 `.trim();
 
-// Fields jo array hone chahiye (frontend inhe list format mein dikhata hai)
 const ARRAY_FIELDS = new Set([
   "objectives", "activities", "outcomes", "timeline",
 ]);
@@ -291,7 +277,6 @@ ${fields.map((f) => formatField(f)).join(",\n")}
 `.trim();
 };
 
-// Node 1 — Core Narrative
 const proposalNode1 = async (state) => {
   const { outlineResult, payload, donorProfile, review } = state;
   const context = buildBaseContext(payload, donorProfile, outlineResult, review);
@@ -306,7 +291,6 @@ const proposalNode1 = async (state) => {
   return safeJSON(res.content);
 };
 
-// Node 2 — Plan & Alignment
 const proposalNode2 = async (state) => {
   const { outlineResult, payload, donorProfile, review } = state;
   const context = buildBaseContext(payload, donorProfile, outlineResult, review);
@@ -321,7 +305,6 @@ const proposalNode2 = async (state) => {
   return safeJSON(res.content);
 };
 
-// Node 3 — Problem & Strategy
 const proposalNode3 = async (state) => {
   const { outlineResult, payload, donorProfile, review } = state;
   const context = buildBaseContext(payload, donorProfile, outlineResult, review);
@@ -335,7 +318,6 @@ const proposalNode3 = async (state) => {
   return safeJSON(res.content);
 };
 
-// Main proposalNode — 3 parallel LLM calls
 const proposalNode = async (state) => {
   const [part1, part2, part3] = await Promise.all([
     proposalNode1(state),
@@ -389,15 +371,14 @@ graph.addNode("proposal", proposalNode);
 graph.addNode("good_end", goodEnd);
 graph.addNode("human_review", humanReview);
 
-// ── FLOW ─────────────────────────────
 graph.setEntryPoint("validate");
-
 graph.addEdge("validate", "donor");
 graph.addEdge("donor", "check");
 
+// FIX 2: score threshold 80 → 75 (less looping, faster)
 graph.addConditionalEdges("check", (state) => {
   const score = state.review?.score || 0;
-  if (score >= 80) return "outline";
+  if (score >= 75) return "outline";  // ✅ 80 → 75
   if (state.forceStop) return "human_review";
   return "improve";
 });
@@ -409,7 +390,14 @@ graph.addEdge("proposal", "good_end");
 const app = graph.compile();
 
 // ── API ─────────────────────────────
+// FIX 3: response timeout headers
 export const generateProposal = async (req, res) => {
+  // Production mein proxy/server timeout badhao
+  req.setTimeout?.(120000);
+  res.setTimeout?.(120000);
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("Keep-Alive", "timeout=120");
+
   try {
     const result = await app.invoke({
       payload: req.body,
@@ -424,6 +412,7 @@ export const generateProposal = async (req, res) => {
       data: result,
     });
   } catch (err) {
+    console.error("[generateProposal] Error:", err.message);
     return res.status(500).json({
       error: err.message,
     });
