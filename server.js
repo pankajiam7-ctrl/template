@@ -70,7 +70,7 @@ app.get('/', (req, res) => {
 })
 
 // ── Start server ──────────────────────────────────────────────
-const PORT = process.env.PORT || 7777
+const PORT = process.env.PORT || 7771
 app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`)
   console.log(`AI Provider: ${getProviderName()}`)
