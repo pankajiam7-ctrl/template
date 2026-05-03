@@ -6,6 +6,7 @@ import connectDB      from './config/db.js'
 import authRoutes     from './routes/authRoutes.js'
 import proposalRoutes from './routes/proposalRoutes.js'
 import { getProviderName } from './services/aiProvider.js'
+import https from 'https'
 
 dotenv.config()
 
@@ -17,7 +18,6 @@ const app = express()
 // ── CORS ──────────────────────────────────────────────────────
 app.use(cors({
   origin: function (origin, callback) {
-    // Allow all localhost ports (dev) + any origin from .env
     const allowed = [
       process.env.FRONTEND_URL,
       'http://localhost:5173',
@@ -46,6 +46,10 @@ app.use('/api/auth',      authRoutes)
 app.use('/api/proposals', proposalRoutes)
 
 // ── Health check ──────────────────────────────────────────────
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok', uptime: process.uptime() })
+})
+
 app.get('/', (req, res) => {
   res.json({
     status:   'ProposalAI Backend running',
@@ -71,9 +75,24 @@ app.get('/', (req, res) => {
 
 // ── Start server ──────────────────────────────────────────────
 const PORT = process.env.PORT || 7771
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`)
   console.log(`AI Provider: ${getProviderName()}`)
 })
-app.timeout = 120000           // ← add karo
-app.keepAliveTimeout = 121000  // ← add karo
+
+// Production timeout fix
+server.timeout          = 120000
+server.keepAliveTimeout = 121000
+server.headersTimeout   = 122000
+
+// ── Keep-Alive Ping (Render free plan — spin down rokne ke liye) ──
+const RENDER_URL = process.env.RENDER_EXTERNAL_URL
+if (RENDER_URL) {
+  setInterval(() => {
+    https.get(`${RENDER_URL}/health`, (res) => {
+      console.log(`[Keep-Alive] Ping — ${res.statusCode}`)
+    }).on('error', (e) => {
+      console.error('[Keep-Alive] Failed:', e.message)
+    })
+  }, 14 * 60 * 1000) // har 14 min
+}
