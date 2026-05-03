@@ -17,27 +17,10 @@ const app = express()
 
 // ── CORS ──────────────────────────────────────────────────────
 app.use(cors({
-  origin: function (origin, callback) {
-    const allowed = [
-      process.env.FRONTEND_URL,
-      'http://localhost:5173',
-      'http://localhost:5174',
-      'http://localhost:5175',
-      'http://localhost:5176',
-      'http://localhost:3000',
-    ].filter(Boolean)
-
-    if (!origin || allowed.includes(origin)) {
-      callback(null, true)
-    } else {
-      callback(new Error(`CORS: origin ${origin} not allowed`))
-    }
-  },
+  origin: '*',
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
-  credentials: true,
 }))
-
 // ── Middleware ────────────────────────────────────────────────
 app.use(express.json())
 
